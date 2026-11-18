@@ -1,0 +1,359 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import worker from '../src/index';
+
+const SILL_VARIANT = 44000000000001;
+const MITER_VARIANT = 44000000000002;
+const DORPEL_VARIANT = 44000000000003;
+const ORIGIN = 'https://www.totaaltegel.nl';
+
+const variantNodes: Record<number, { price: string; minWidth?: string; maxWidth?: string }> = {
+  [SILL_VARIANT]: { price: '0.85', minWidth: '100', maxWidth: '600' },
+  [MITER_VARIANT]: { price: '15.00' },
+  [DORPEL_VARIANT]: { price: '85.47' },
+};
+
+type GraphqlCall = { query: string; variables: Record<string, any> };
+
+const ACCESS_TOKEN = 'offline-access-token';
+
+let calls: GraphqlCall[];
+let adminTokens: (string | null)[];
+let openDrafts: { id: string; status: string; customAttributes: { key: string; value: string }[] }[];
+let rateLimitOk: boolean;
+
+const env = () =>
+  ({
+    SHOPIFY_SHOP: 'totaaltegel.myshopify.com',
+    SHOPIFY_ADMIN_ACCESS_TOKEN: ACCESS_TOKEN,
+    SHOPIFY_API_VERSION: '2026-10',
+    ALLOWED_ORIGINS: 'https://www.totaaltegel.nl,http://127.0.0.1:9292',
+    CHECKOUT_RATE_LIMITER: { limit: async () => ({ success: rateLimitOk }) },
+  }) as unknown as Env;
+
+const shopifyFetch = async (_url: string, init: RequestInit) => {
+  adminTokens.push(new Headers(init.headers).get('X-Shopify-Access-Token'));
+  const call = JSON.parse(String(init.body)) as GraphqlCall;
+  calls.push(call);
+
+  if (call.query.includes('MaatwerkVariants')) {
+    const nodes = call.variables.ids.map((gid: string) => {
+      const id = Number(gid.split('/').pop());
+      const variant = variantNodes[id];
+      if (!variant) return null;
+
+      return {
+        id: gid,
+        price: variant.price,
+        minWidth: variant.minWidth ? { value: variant.minWidth } : null,
+        maxWidth: variant.maxWidth ? { value: variant.maxWidth } : null,
+      };
+    });
+    return Response.json({ data: { nodes } });
+  }
+
+  if (call.query.includes('OpenMaatwerkDrafts')) {
+    return Response.json({ data: { draftOrders: { nodes: openDrafts } } });
+  }
+
+  const draftOrder = { id: 'gid://shopify/DraftOrder/1', name: '#D1', invoiceUrl: 'https://invoice.test/1', status: 'OPEN' };
+  const key = call.query.includes('draftOrderUpdate') ? 'draftOrderUpdate' : 'draftOrderCreate';
+  return Response.json({ data: { [key]: { draftOrder, userErrors: [] } } });
+};
+
+const sillLine = (overrides: Record<string, string> = {}, quantity = 1) => ({
+  variantId: SILL_VARIANT,
+  quantity,
+  properties: {
+    _maatwerk: '1',
+    _calc_mode: 'sill_m2',
+    _depth_cm: '40',
+    _length_cm: '200',
+    _expected_line_cents: '6800',
+    _line_uid: 'abc',
+    Dikte: '3 cm',
+    Diepte: '40 cm',
+    Lengte: '200 cm',
+    ...overrides,
+  },
+});
+
+const miterLine = { variantId: MITER_VARIANT, quantity: 1, properties: { _addon: 'miter', _parent_uid: 'abc', _line_uid: 'abc-x0' } };
+
+const checkout = (body: Record<string, unknown>, origin: string | null = ORIGIN, method = 'POST') =>
+  worker.fetch(
+    new Request('https://worker.test/maatwerk-checkout', {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(origin && { Origin: origin }) },
+      body: method === 'POST' ? JSON.stringify({ cartToken: 'cart-1', ...body }) : undefined,
+    }),
+    env(),
+  );
+
+const mutationCall = () => calls.find((call) => call.query.includes('mutation'));
+
+beforeEach(() => {
+  calls = [];
+  adminTokens = [];
+  openDrafts = [];
+  rateLimitOk = true;
+  vi.stubGlobal('fetch', vi.fn(shopifyFetch));
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe('draft lines', () => {
+  it('sets a price override of 68.00 on a 40 x 200 cm vensterbank', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ invoiceUrl: 'https://invoice.test/1' });
+
+    const [lineItem] = mutationCall()!.variables.input.lineItems;
+    expect(lineItem).toMatchObject({
+      variantId: `gid://shopify/ProductVariant/${SILL_VARIANT}`,
+      quantity: 1,
+      priceOverride: { amount: '68.00', currencyCode: 'EUR' },
+    });
+    expect(lineItem.customAttributes).toContainEqual({ key: 'Lengte', value: '200 cm' });
+  });
+
+  it('gives two pieces of the same cut two quantity-1 lines with the same override', async () => {
+    const response = await checkout({
+      expectedTotalCents: 13_600,
+      lines: [sillLine({ _line_uid: 'a' }), sillLine({ _line_uid: 'b' })],
+    });
+
+    expect(response.status).toBe(200);
+    const { lineItems } = mutationCall()!.variables.input;
+    expect(lineItems).toHaveLength(2);
+    for (const lineItem of lineItems) {
+      expect(lineItem.quantity).toBe(1);
+      expect(lineItem.priceOverride.amount).toBe('68.00');
+    }
+  });
+
+  it('splits a sill line with quantity 2 into two quantity-1 lines', async () => {
+    const response = await checkout({ expectedTotalCents: 13_600, lines: [sillLine({}, 2)] });
+
+    expect(response.status).toBe(200);
+    const { lineItems } = mutationCall()!.variables.input;
+    expect(lineItems.map((lineItem: any) => lineItem.quantity)).toEqual([1, 1]);
+  });
+
+  it('prices a raamdorpel at 128.21', async () => {
+    const response = await checkout({
+      expectedTotalCents: 12_821,
+      lines: [
+        {
+          variantId: DORPEL_VARIANT,
+          quantity: 1,
+          properties: { _maatwerk: '1', _calc_mode: 'sill_m1', _length_cm: '150', _expected_line_cents: '12821' },
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(mutationCall()!.variables.input.lineItems[0].priceOverride.amount).toBe('128.21');
+  });
+
+  it('only overrides the sill; the miter keeps its catalog price', async () => {
+    const response = await checkout({ expectedTotalCents: 6800 + 1500, lines: [sillLine(), miterLine] });
+
+    expect(response.status).toBe(200);
+    const [sill, miter] = mutationCall()!.variables.input.lineItems;
+    expect(sill.priceOverride.amount).toBe('68.00');
+    expect(miter).not.toHaveProperty('priceOverride');
+    expect(miter.quantity).toBe(1);
+  });
+});
+
+describe('draft settings', () => {
+  it('tags the draft, links the cart token and the customer, and keeps discounts on', async () => {
+    await checkout({
+      expectedTotalCents: 6800,
+      customerId: 123,
+      email: 'klant@example.com',
+      discountCodes: ['WINTER10'],
+      lines: [sillLine()],
+    });
+
+    const { input } = mutationCall()!.variables;
+    expect(input).toMatchObject({
+      presentmentCurrencyCode: 'EUR',
+      acceptAutomaticDiscounts: true,
+      allowDiscountCodesInCheckout: true,
+      discountCodes: ['WINTER10'],
+      tags: ['maatwerk-storefront'],
+      customAttributes: [{ key: 'cart_token', value: 'cart-1' }],
+      purchasingEntity: { customerId: 'gid://shopify/Customer/123' },
+      email: 'klant@example.com',
+    });
+    expect(input).not.toHaveProperty('shippingLine');
+    expect(input).not.toHaveProperty('reserveInventoryUntil');
+  });
+
+  it('updates the open draft for the same cart instead of creating a second one', async () => {
+    openDrafts = [
+      { id: 'gid://shopify/DraftOrder/9', status: 'OPEN', customAttributes: [{ key: 'cart_token', value: 'other' }] },
+      { id: 'gid://shopify/DraftOrder/7', status: 'OPEN', customAttributes: [{ key: 'cart_token', value: 'cart-1' }] },
+    ];
+
+    await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    const mutation = mutationCall()!;
+    expect(mutation.query).toContain('draftOrderUpdate');
+    expect(mutation.variables.id).toBe('gid://shopify/DraftOrder/7');
+  });
+
+  it('creates a new draft when the matching draft is already completed', async () => {
+    openDrafts = [
+      { id: 'gid://shopify/DraftOrder/7', status: 'COMPLETED', customAttributes: [{ key: 'cart_token', value: 'cart-1' }] },
+    ];
+
+    await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(mutationCall()!.query).toContain('draftOrderCreate');
+  });
+});
+
+describe('rejections', () => {
+  it('returns 409 without a mutation when _expected_line_cents was tampered with', async () => {
+    const response = await checkout({
+      expectedTotalCents: 100,
+      lines: [sillLine({ _expected_line_cents: '100' })],
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'price_mismatch', expectedCents: 100, computedCents: 6800 });
+    expect(mutationCall()).toBeUndefined();
+  });
+
+  it('returns 409 when the cart total is off by more than 1 cent', async () => {
+    const response = await checkout({ expectedTotalCents: 8500, lines: [sillLine(), miterLine] });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'price_mismatch', expectedCents: 8500, computedCents: 8300 });
+    expect(mutationCall()).toBeUndefined();
+  });
+
+  it('accepts a 1 cent difference', async () => {
+    const response = await checkout({ expectedTotalCents: 6801, lines: [sillLine({ _expected_line_cents: '6799' })] });
+    expect(response.status).toBe(200);
+  });
+
+  it('returns 400 when _length_cm is missing', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine({ _length_cm: '' })] });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_line' });
+    expect(mutationCall()).toBeUndefined();
+  });
+
+  it('returns 400 when the depth is outside the ERP width bounds', async () => {
+    const response = await checkout({
+      expectedTotalCents: 12_750,
+      lines: [sillLine({ _depth_cm: '75', _expected_line_cents: '12750' })],
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for an unknown variant', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [{ ...sillLine(), variantId: 1 }] });
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when the cart has no maatwerk line', async () => {
+    const response = await checkout({ expectedTotalCents: 1500, lines: [miterLine] });
+    expect(await response.json()).toEqual({ error: 'no_maatwerk_line' });
+  });
+
+  it('returns 500 draft_failed when Shopify returns user errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (!String(init.body).includes('mutation')) return shopifyFetch(url, init);
+        return Response.json({ data: { draftOrderCreate: { draftOrder: null, userErrors: [{ field: null, message: 'nope' }] } } });
+      }),
+    );
+
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'draft_failed' });
+  });
+});
+
+describe('admin access token', () => {
+  it('sends the stored access token on every Admin API call', async () => {
+    await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(adminTokens).toHaveLength(3);
+    expect(adminTokens.every((token) => token === ACCESS_TOKEN)).toBe(true);
+  });
+
+  it('returns 500 draft_failed when the IP allowlist rejects the Worker', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Forbidden', { status: 403 })));
+
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'draft_failed' });
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('admin_http_403'));
+  });
+
+  it('returns 500 draft_failed when the token is revoked', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized', { status: 401 })));
+
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(response.status).toBe(500);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('admin_http_401'));
+  });
+});
+
+describe('access', () => {
+  it('rejects other origins with 403', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] }, 'https://evil.example');
+    expect(response.status).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects requests without an origin', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] }, null);
+    expect(response.status).toBe(403);
+  });
+
+  it('answers the CORS preflight for an allowed origin', async () => {
+    const response = await checkout({}, 'http://127.0.0.1:9292', 'OPTIONS');
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://127.0.0.1:9292');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+  });
+
+  it('rejects GET', async () => {
+    const response = await checkout({}, ORIGIN, 'GET');
+    expect(response.status).toBe(405);
+  });
+
+  it('returns 429 when the rate limit is hit', async () => {
+    rateLimitOk = false;
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: 'rate_limited' });
+  });
+
+  it('never returns the draft id or the token', async () => {
+    const response = await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+    const text = await response.text();
+
+    expect(text).not.toContain('DraftOrder');
+    expect(text).not.toContain(ACCESS_TOKEN);
+  });
+});

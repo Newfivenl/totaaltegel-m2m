@@ -1,0 +1,6 @@
+SHOPIFY_SHOP=totaaltegel.myshopify.com
+# Only used by `npm run token`; the Worker itself only needs the access token.
+SHOPIFY_CLIENT_ID=replace-me
+SHOPIFY_CLIENT_SECRET=replace-me
+# Written by `npm run token`.
+SHOPIFY_ADMIN_ACCESS_TOKEN=replace-me

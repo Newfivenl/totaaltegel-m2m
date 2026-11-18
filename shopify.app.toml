@@ -1,0 +1,17 @@
+# `shopify app config link` fills in client_id. The client secret never goes in this file.
+# The IP allowlist is not part of this file; set it in the Dev Dashboard under Settings > IP allowlist.
+client_id = ""
+name = "Totaaltegel M2M"
+# Must share its host with the redirect URL; the app has no UI, this only serves `npm run token`.
+application_url = "http://localhost:3456"
+embedded = false
+
+[access_scopes]
+scopes = "read_draft_orders,write_draft_orders,read_products"
+
+[auth]
+# Used once by `npm run token` to install the app and get the offline access token.
+redirect_urls = ["http://localhost:3456/callback"]
+
+[webhooks]
+api_version = "2026-10"

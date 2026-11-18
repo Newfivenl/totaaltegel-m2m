@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Blocks commits that contain env files or Shopify credentials.
+set -euo pipefail
+
+blocked=0
+
+while IFS= read -r file; do
+  case "$file" in
+    *.example) ;;
+    .dev.vars | .dev.vars.* | */.dev.vars | */.dev.vars.* | .env | .env.* | */.env | */.env.* | *.pem | *.key | *.p12)
+      echo "pre-commit: refusing to commit secret file: $file" >&2
+      blocked=1
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+secret_pattern='shp(at|ss|ca|pa|ua)_[A-Za-z0-9]{16,}|SHOPIFY_(CLIENT_SECRET|ADMIN_ACCESS_TOKEN)[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_-]{16,}'
+
+if git diff --cached -U0 --diff-filter=ACMR | grep -E '^\+' | grep -Eq "$secret_pattern"; then
+  echo "pre-commit: staged changes look like they contain a Shopify secret or token." >&2
+  echo "Put it in .dev.vars locally or use 'npx wrangler secret put'." >&2
+  blocked=1
+fi
+
+exit "$blocked"
