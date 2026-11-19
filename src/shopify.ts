@@ -1,8 +1,10 @@
 import { centsToAmount, moneyToCents } from './pricing';
 import type { DraftLine, VariantInfo } from './quote';
-import type { CheckoutRequest } from './request';
+import type { CheckoutRequest, QuoteRequest } from './request';
 
 export const DRAFT_TAG = 'maatwerk-storefront';
+export const QUOTE_TAG = 'offerte-aanvraag';
+const QUOTE_COUNTRY = 'NL';
 const CART_TOKEN_ATTRIBUTE = 'cart_token';
 const CURRENCY = 'EUR';
 const MAX_NODES_PER_QUERY = 250;
@@ -125,6 +127,16 @@ export const findOpenDraftId = async (env: Env, cartToken: string): Promise<stri
   return match?.id ?? null;
 };
 
+const draftLineItems = (lines: DraftLine[]) =>
+  lines.map((line) => ({
+    variantId: variantGid(line.variantId),
+    quantity: line.quantity,
+    customAttributes: Object.entries(line.properties).map(([key, value]) => ({ key, value })),
+    ...(line.priceOverrideCents !== null && {
+      priceOverride: { amount: centsToAmount(line.priceOverrideCents), currencyCode: CURRENCY },
+    }),
+  }));
+
 export const buildDraftInput = (request: CheckoutRequest, lines: DraftLine[]) => ({
   presentmentCurrencyCode: CURRENCY,
   acceptAutomaticDiscounts: true,
@@ -134,15 +146,35 @@ export const buildDraftInput = (request: CheckoutRequest, lines: DraftLine[]) =>
   customAttributes: [{ key: CART_TOKEN_ATTRIBUTE, value: request.cartToken }],
   ...(request.customerId && { purchasingEntity: { customerId: `gid://shopify/Customer/${request.customerId}` } }),
   ...(request.email && { email: request.email }),
-  lineItems: lines.map((line) => ({
-    variantId: variantGid(line.variantId),
-    quantity: line.quantity,
-    customAttributes: Object.entries(line.properties).map(([key, value]) => ({ key, value })),
-    ...(line.priceOverrideCents !== null && {
-      priceOverride: { amount: centsToAmount(line.priceOverrideCents), currencyCode: CURRENCY },
-    }),
-  })),
+  lineItems: draftLineItems(lines),
 });
+
+const splitName = (name: string) => {
+  const [firstName, ...rest] = name.split(/\s+/);
+  return { firstName, lastName: rest.join(' ') || firstName };
+};
+
+// Phone stays in the note: Shopify rejects drafts whose phone isn't valid E.164.
+export const buildQuoteDraftInput = (request: QuoteRequest, lines: DraftLine[]) => {
+  const { customer } = request;
+
+  return {
+    presentmentCurrencyCode: CURRENCY,
+    tags: [QUOTE_TAG],
+    email: customer.email,
+    ...(request.note && { note: request.note }),
+    ...(customer.address && {
+      shippingAddress: {
+        ...splitName(customer.name),
+        address1: customer.address,
+        ...(customer.zip && { zip: customer.zip }),
+        ...(customer.city && { city: customer.city }),
+        countryCode: QUOTE_COUNTRY,
+      },
+    }),
+    lineItems: draftLineItems(lines),
+  };
+};
 
 const DRAFT_FIELDS = /* GraphQL */ `
   draftOrder {
@@ -187,7 +219,7 @@ const unwrapDraft = (payload: DraftPayload): SavedDraft => {
 export const saveDraft = async (
   env: Env,
   existingDraftId: string | null,
-  input: ReturnType<typeof buildDraftInput>,
+  input: ReturnType<typeof buildDraftInput> | ReturnType<typeof buildQuoteDraftInput>,
 ): Promise<SavedDraft> => {
   if (existingDraftId) {
     const data = await adminGraphql<{ draftOrderUpdate: DraftPayload }>(env, UPDATE_DRAFT_MUTATION, {

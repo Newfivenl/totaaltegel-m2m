@@ -11,7 +11,7 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 | **Client** | Totaaltegel |
 | **Store** | `totaaltegel.myshopify.com` (not Shopify Plus) |
 | **Repo role** | `POST /maatwerk-checkout`: turns a cart with maatwerk lines (vensterbank/raamdorpel) into one Shopify draft order with `priceOverride`, returns `invoiceUrl`. `POST /webhooks/orders-create`: tags + holds orders whose maatwerk lines skipped the draft order |
-| **Spec** | `totaaltegel-theme/docs/plans/2026-11-18-maatwerk-draft-order-handoff.md` (Dutch). The auth sections there (“Develop apps”, client credentials) are outdated; this file wins |
+| **Handoff** | `HANDOFF.md` in this repo: end-to-end flow, go-live checklist, runbook. Original spec `totaaltegel-theme/docs/plans/2026-11-18-maatwerk-draft-order-handoff.md` (Dutch, auth sections outdated) |
 | **Live URL** | `https://totaaltegel-maatwerk-checkout.newfive.workers.dev` (Cloudflare account `newfive`) |
 | **Shopify app** | “Totaaltegel M2M”, Dev Dashboard of Newfive’s org, custom distribution to `totaaltegel.myshopify.com` |
 
@@ -19,14 +19,14 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 
 | File | Role |
 |------|------|
-| `src/index.ts` | Routes, Origin allowlist + CORS preflight, rate limit, error → status mapping |
-| `src/request.ts` | Body parsing/validation |
+| `src/index.ts` | Routes (`/maatwerk-checkout`, `/quote-request`, webhook), Origin allowlist + CORS preflight, rate limit per route + IP, error → status mapping |
+| `src/request.ts` | Body parsing/validation (checkout and quote) |
 | `src/pricing.ts` | Legacy ÷100 switch, `sill_m2` / `sill_m1` formulas (integer math). Mirrored in the theme’s `sillPieceCents()` |
-| `src/quote.ts` | Lines → draft lines, `_expected_line_cents` and total checks (±1 cent), ERP width bounds, qty>1 sill split into qty-1 lines |
+| `src/quote.ts` | Lines → draft lines, `_expected_line_cents` and total checks (±1 cent), ERP width bounds, qty>1 sill split into qty-1 lines. `quoteRequestLines`: same pricing without client checks, rewrites `_expected_line_cents` |
 | `src/shopify.ts` | Admin GraphQL: variant prices + `erp.min/max_width_mm`, open-draft lookup by `cart_token`, `draftOrderCreate` / `draftOrderUpdate` |
 | `src/webhooks.ts` | `orders/create`: HMAC check, bypass detection (`_maatwerk=1` line with `source_name ≠ shopify_draft_order` or price ≠ `_expected_line_cents`), `tagsAdd` `maatwerk-prijs-controle` + `fulfillmentOrderHold` (handle `maatwerk-prijs-controle`) |
 | `scripts/get-access-token.mjs` | One-time localhost OAuth install → offline token into `.dev.vars` + Worker secret |
-| `test/` | Vitest in Node (41 tests), Shopify mocked via `fetch` stub |
+| `test/` | Vitest in Node (50 tests), Shopify mocked via `fetch` stub |
 
 ### Commands
 
@@ -38,14 +38,19 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 
 **Webhook safety net: live (2026-11-19).** Scopes granted (order + merchant-managed fulfillment orders), new token installed. Subscription `gid://shopify/WebhookSubscription/2591017206103` (`ORDERS_CREATE` → `/webhooks/orders-create`) created via Admin API `webhookSubscriptionCreate` (shop-specific; the Dev Dashboard has no webhook form). Unsigned calls get 401.
 
-- Protected customer data access (orders) must be granted in the Dev Dashboard, or Shopify may not deliver.
-- Verify the first real draft-order payment logs `maatwerk_order_ok` with `source: shopify_draft_order` (`wrangler tail`). If the source differs, every maatwerk order gets held: fix `DRAFT_ORDER_SOURCE`.
+**Quote requests → draft order: Worker live (2026-11-19).** `POST /quote-request` creates a draft tagged `offerte-aanvraag` (email, NL shipping address, summary as note, sills priced by the Worker). Live test via curl with variant `55807134892375` 40×200 → `#D12`, €333,60, address OK; deleted. Theme side built in `totaaltegel-theme` (setting Prices → Quote form → **Draft order URL**), **not committed or pushed yet**.
 
-**Not done:**
+**Manual test order + ERP delivery checked OK (2026-11-19, with Bart).** Theme code is on `main` of `totaaltegel-theme` (`f49c920`); the theme setting is still **off** on the live theme.
 
-1. **ERP import** must read cut size from `_length_cm` / `_depth_cm` (quantity becomes pieces) before the theme switch goes on. ERP should also skip orders tagged `maatwerk-prijs-controle`.
-2. **VAT check:** the draft checkout added 21% on top of €424,00. Fine if store prices are excl. VAT; wrong if they’re incl. VAT (compare with a normal checkout).
-3. **Paid test order** through a draft (also confirms the webhook source value).
+**Open before go-live** (full checklist in `HANDOFF.md`):
+
+1. **Safety net on the test order:** confirm it has **no** `maatwerk-prijs-controle` tag and no fulfillment hold (proves `source_name = shopify_draft_order`). If it was held: fix `DRAFT_ORDER_SOURCE` in `src/webhooks.ts`.
+2. **VAT:** the draft checkout added 21% on top of the sill price. Correct only if store prices are excl. VAT.
+3. **Protected customer data access** (orders) granted in the Dev Dashboard, or Shopify may not deliver the webhook.
+4. **Office IP** (`212.178.101.182`) removed from the app's IP allowlist again.
+5. **ERP** skips orders tagged `maatwerk-prijs-controle`.
+6. **Enable** theme setting Cart → Maatwerk checkout with the Worker URL `…/maatwerk-checkout`.
+7. **Quotes:** commit/push the theme change, set Prices → Quote form → Draft order URL to `…/quote-request`, send one test quote from the PDP (this also emails the shop).
 
 ## Live configuration
 
@@ -58,10 +63,13 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 | API version | `2026-10` |
 | App scopes (live) | `read_draft_orders,write_draft_orders,read_products,read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders` |
 | App URL / redirect | `http://localhost:3456` / `http://localhost:3456/callback` (only for `npm run token`) |
-| App IP allowlist (enforced) | `2a06:98c0:3600::103` (Worker) + Damy’s home IPv4 (see Dev Dashboard). Office IP not on it |
+| App IP allowlist (enforced) | `2a06:98c0:3600::103` (Worker) + Damy’s home IPv4 (see Dev Dashboard). Office IP added temporarily on 2026-11-19 for the webhook setup; remove it |
+| Webhook subscription | `gid://shopify/WebhookSubscription/2591017206103`, `ORDERS_CREATE` → `/webhooks/orders-create` (shop-specific, created via Admin API) |
+| Theme switch | `totaaltegel-theme` setting `maatwerk_checkout_enabled` + `maatwerk_checkout_url` (Cart group), **off** on live |
 
 ## Decision Log
 
+- **2026-11-19 — Quote drafts next to the contact email, fire-and-forget.** The dialog keeps the native Shopify contact-form submit (bot protection hooks into it) and sends the draft with `fetch(keepalive)` + `text/plain` (no preflight). A failed draft never blocks the email. Every submit creates a new draft (no cart token to dedupe on). Paid orders from a draft tagged `offerte-aanvraag` skip the price check in the safety net because staff may renegotiate quote prices. Tile quotes carry the tile at quantity 1 (the dialog only knows m², not boxes); staff set the quantity.
 - **2026-11-19 — Stay on draft orders.** Cart Transform (bundle `lineExpand` / `lineUpdate`) would avoid drafts, but Functions in custom apps need Shopify Plus and the store isn’t on Plus.
 - **2026-11-19 — Exact price formula.** Full-cent `sill_m2` variants used to round €/m² to whole cents per 0,01 m² on the PDP; the theme now uses the Worker formula (area × €/m², rounded once) when the draft flow is on.
 - **2026-11-19 — Safety net = tag + fulfillment hold** on orders with maatwerk lines that didn’t come through a draft (direct `/checkout`, old links). Checkout validation would need a Function (Plus). Detection uses both order source and per-line price, so a wrong guess of the source value fails safe (holds instead of ships).
@@ -84,5 +92,6 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 
 ## Session Handoff
 
-- **2026-11-19 (bundle research, safety net, theme integration):** Researched bundles instead of drafts: not possible without Plus. Added the `orders/create` safety net (deployed; subscription + scopes pending, see Current status). Theme integration built in `totaaltegel-theme` behind the theme setting **Cart → Maatwerk checkout** (off by default) and verified end to end on the dev theme. **Next:** Dev Dashboard steps for the webhook, ERP import change, VAT check, paid test order, then enable the theme setting with the Worker URL `…/maatwerk-checkout`.
+- **2026-11-19 (quote requests as draft orders):** Added `POST /quote-request` + quote exemption in the safety net, 50 tests, deployed, live-tested with curl (`#D12`, deleted). Theme: quote dialog posts to the Worker when Prices → Quote form → Draft order URL is set; calculator snapshot exposes `draftLines`; `assets/main.js` rebuilt. Theme changes are local only (theme `main` is 9 commits behind `origin`, pushing publishes). **Next:** pull + commit + push the theme, set the URL, one PDP test quote; then the go-live list above.
+- **2026-11-19 (bundle research, safety net, theme integration):** Researched bundles instead of drafts: not possible without Plus. Added the `orders/create` safety net: deployed, scopes granted, subscription created, committed (`c260bf9`). Theme integration committed in `totaaltegel-theme` (`f49c920`) behind the theme setting **Cart → Maatwerk checkout** (off on live). Verified on the dev theme; manual test order reached the ERP correctly (checked with Bart). Wrote `HANDOFF.md`. **Next:** the "Open before go-live" list above, then enable the theme setting.
 - **2026-11-18 (Worker setup):** Built the Worker from the handoff spec, deployed it, created the Shopify app (Dev Dashboard, Newfive org), installed it via `npm run token`, enforced the IP allowlist, verified access. Secrets out of git (`.gitignore` + `.githooks/pre-commit`, enabled via `npm install`).

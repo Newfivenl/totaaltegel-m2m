@@ -287,6 +287,101 @@ describe('rejections', () => {
   });
 });
 
+const customer = {
+  name: 'Jan de Vries',
+  email: 'jan@example.com',
+  phone: '06 12345678',
+  address: 'Dorpsstraat 1',
+  zip: '5973 AA',
+  city: 'Hegelsom',
+};
+
+const quoteRequest = (body: Record<string, unknown>, origin: string | null = ORIGIN) =>
+  worker.fetch(
+    new Request('https://worker.test/quote-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain', ...(origin && { Origin: origin }) },
+      body: JSON.stringify({ customer, note: 'Vensterbank\n40 x 200 cm', ...body }),
+    }),
+    env(),
+  );
+
+describe('quote request', () => {
+  it('creates a tagged draft with the customer, address and note, without reusing an open draft', async () => {
+    const response = await quoteRequest({ lines: [sillLine(), miterLine] });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(calls.some((call) => call.query.includes('OpenMaatwerkDrafts'))).toBe(false);
+
+    const mutation = mutationCall()!;
+    expect(mutation.query).toContain('draftOrderCreate');
+    expect(mutation.variables.input).toMatchObject({
+      presentmentCurrencyCode: 'EUR',
+      tags: ['offerte-aanvraag'],
+      email: 'jan@example.com',
+      note: 'Vensterbank\n40 x 200 cm',
+      shippingAddress: {
+        firstName: 'Jan',
+        lastName: 'de Vries',
+        address1: 'Dorpsstraat 1',
+        zip: '5973 AA',
+        city: 'Hegelsom',
+        countryCode: 'NL',
+      },
+    });
+    expect(mutation.variables.input).not.toHaveProperty('phone');
+
+    const [sill, miter] = mutation.variables.input.lineItems;
+    expect(sill.priceOverride.amount).toBe('68.00');
+    expect(miter).not.toHaveProperty('priceOverride');
+  });
+
+  it('uses the Worker price and rewrites _expected_line_cents to it', async () => {
+    const response = await quoteRequest({ lines: [sillLine({ _expected_line_cents: '100' }, 2)] });
+
+    expect(response.status).toBe(201);
+    const { lineItems } = mutationCall()!.variables.input;
+    expect(lineItems).toHaveLength(2);
+    for (const lineItem of lineItems) {
+      expect(lineItem.quantity).toBe(1);
+      expect(lineItem.priceOverride.amount).toBe('68.00');
+      expect(lineItem.customAttributes).toContainEqual({ key: '_expected_line_cents', value: '6800' });
+    }
+  });
+
+  it('accepts a quote without maatwerk lines', async () => {
+    const response = await quoteRequest({ lines: [{ variantId: MITER_VARIANT, quantity: 3, properties: { Oppervlakte: '24 m²' } }] });
+
+    expect(response.status).toBe(201);
+    expect(mutationCall()!.variables.input.lineItems[0]).toMatchObject({ quantity: 3 });
+  });
+
+  it('leaves out the address when the customer gave none', async () => {
+    await quoteRequest({ customer: { ...customer, address: '' }, lines: [miterLine] });
+    expect(mutationCall()!.variables.input).not.toHaveProperty('shippingAddress');
+  });
+
+  it('returns 400 without a valid email', async () => {
+    const response = await quoteRequest({ customer: { ...customer, email: 'jan' }, lines: [miterLine] });
+
+    expect(response.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('returns 400 for a sill outside the ERP width bounds', async () => {
+    const response = await quoteRequest({ lines: [sillLine({ _depth_cm: '75' })] });
+
+    expect(response.status).toBe(400);
+    expect(mutationCall()).toBeUndefined();
+  });
+
+  it('rejects other origins with 403', async () => {
+    const response = await quoteRequest({ lines: [miterLine] }, 'https://evil.example');
+    expect(response.status).toBe(403);
+  });
+});
+
 describe('admin access token', () => {
   it('sends the stored access token on every Admin API call', async () => {
     await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });

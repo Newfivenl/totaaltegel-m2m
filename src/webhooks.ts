@@ -1,5 +1,5 @@
 import { moneyToCents, withinTolerance } from './pricing';
-import { adminGraphql, ShopifyError, type UserError } from './shopify';
+import { adminGraphql, QUOTE_TAG, ShopifyError, type UserError } from './shopify';
 
 export const BYPASS_TAG = 'maatwerk-prijs-controle';
 const HOLD_HANDLE = 'maatwerk-prijs-controle';
@@ -17,6 +17,7 @@ type OrderWebhook = {
   admin_graphql_api_id?: string;
   name?: string;
   source_name?: string;
+  tags?: string;
   line_items?: WebhookLineItem[];
 };
 
@@ -47,6 +48,9 @@ const property = (line: WebhookLineItem, name: string): string | undefined => {
   return match === undefined ? undefined : String(match.value);
 };
 
+const orderTags = (order: OrderWebhook): string[] =>
+  (order.tags ?? '').split(',').map((tag) => tag.trim().toLowerCase());
+
 // A maatwerk line only has the right price if it came through the draft order with priceOverride.
 // Any other path (direct /checkout, old links) charges the shared catalog price.
 export const checkMaatwerkBypass = (order: OrderWebhook): BypassCheck => {
@@ -54,7 +58,11 @@ export const checkMaatwerkBypass = (order: OrderWebhook): BypassCheck => {
   if (!maatwerkLines.length) return { bypassed: false, reasons: [] };
 
   const reasons: string[] = [];
-  if (order.source_name !== DRAFT_ORDER_SOURCE) reasons.push(`source:${order.source_name ?? 'unknown'}`);
+  const fromDraft = order.source_name === DRAFT_ORDER_SOURCE;
+  if (!fromDraft) reasons.push(`source:${order.source_name ?? 'unknown'}`);
+
+  // Staff may change prices on a quote draft before sending it; only the Worker and staff can create drafts.
+  if (fromDraft && orderTags(order).includes(QUOTE_TAG)) return { bypassed: false, reasons: [] };
 
   for (const line of maatwerkLines) {
     const expected = Number(property(line, '_expected_line_cents'));

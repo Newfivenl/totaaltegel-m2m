@@ -13,6 +13,21 @@ export type CheckoutRequest = {
   lines: CheckoutLine[];
 };
 
+export type QuoteCustomer = {
+  name: string;
+  email: string;
+  phone: string | null;
+  address: string | null;
+  zip: string | null;
+  city: string | null;
+};
+
+export type QuoteRequest = {
+  customer: QuoteCustomer;
+  note: string;
+  lines: CheckoutLine[];
+};
+
 export class InvalidRequestError extends Error {
   constructor(readonly code: 'invalid_request' | 'invalid_line' | 'no_maatwerk_line') {
     super(code);
@@ -23,6 +38,8 @@ const MAX_LINES = 499;
 const MAX_QUANTITY = 10_000;
 const MAX_DISCOUNT_CODES = 10;
 const MAX_STRING_LENGTH = 500;
+const MAX_NOTE_LENGTH = 5000;
+const MAX_QUOTE_LINES = 100;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -113,6 +130,48 @@ export const parseCheckoutRequest = (body: unknown): CheckoutRequest => {
     email: parseOptionalString(body.email),
     discountCodes: parseDiscountCodes(body.discountCodes),
     expectedTotalCents,
+    lines: lines.map(parseLine),
+  };
+};
+
+const parseRequiredString = (value: unknown): string => {
+  const parsed = parseOptionalString(value);
+  if (!parsed) throw new InvalidRequestError('invalid_request');
+  return parsed;
+};
+
+const parseQuoteCustomer = (value: unknown): QuoteCustomer => {
+  if (!isRecord(value)) throw new InvalidRequestError('invalid_request');
+
+  const email = parseRequiredString(value.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new InvalidRequestError('invalid_request');
+
+  return {
+    name: parseRequiredString(value.name),
+    email,
+    phone: parseOptionalString(value.phone),
+    address: parseOptionalString(value.address),
+    zip: parseOptionalString(value.zip),
+    city: parseOptionalString(value.city),
+  };
+};
+
+export const parseQuoteRequest = (body: unknown): QuoteRequest => {
+  if (!isRecord(body)) throw new InvalidRequestError('invalid_request');
+
+  const { lines, note } = body;
+
+  if (!Array.isArray(lines) || lines.length === 0 || lines.length > MAX_QUOTE_LINES) {
+    throw new InvalidRequestError('invalid_request');
+  }
+
+  if (note !== undefined && (typeof note !== 'string' || note.length > MAX_NOTE_LENGTH)) {
+    throw new InvalidRequestError('invalid_request');
+  }
+
+  return {
+    customer: parseQuoteCustomer(body.customer),
+    note: typeof note === 'string' ? note.trim() : '',
     lines: lines.map(parseLine),
   };
 };

@@ -1,9 +1,10 @@
-import { PriceMismatchError, quoteCheckout } from './quote';
-import { InvalidRequestError, parseCheckoutRequest } from './request';
-import { buildDraftInput, fetchVariants, findOpenDraftId, saveDraft } from './shopify';
+import { PriceMismatchError, quoteCheckout, quoteRequestLines } from './quote';
+import { InvalidRequestError, parseCheckoutRequest, parseQuoteRequest } from './request';
+import { buildDraftInput, buildQuoteDraftInput, fetchVariants, findOpenDraftId, saveDraft } from './shopify';
 import { handleOrderCreated } from './webhooks';
 
-const ROUTE = '/maatwerk-checkout';
+const CHECKOUT_ROUTE = '/maatwerk-checkout';
+const QUOTE_ROUTE = '/quote-request';
 const ORDERS_CREATE_WEBHOOK = '/webhooks/orders-create';
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -76,6 +77,37 @@ const handleCheckout = async (request: Request, env: Env): Promise<[number, unkn
   }
 };
 
+// The email from Shopify's contact form is the merchant's copy; the draft order is for working out the quote.
+const handleQuoteRequest = async (request: Request, env: Env): Promise<[number, unknown]> => {
+  let quoteRequest;
+  let priced;
+
+  try {
+    quoteRequest = parseQuoteRequest(await readBody(request));
+    const variants = await fetchVariants(env, quoteRequest.lines.map((line) => line.variantId));
+    priced = quoteRequestLines(quoteRequest.lines, variants);
+  } catch (error) {
+    if (error instanceof InvalidRequestError) return [400, { error: error.code }];
+
+    log('variant_lookup_failed', { message: error instanceof Error ? error.message : String(error) });
+    return [500, { error: 'draft_failed' }];
+  }
+
+  try {
+    const draft = await saveDraft(env, null, buildQuoteDraftInput(quoteRequest, priced.lines));
+    log('quote_draft_saved', { draft: draft.name, computedCents: priced.computedCents, lines: priced.lines.length });
+    return [201, { ok: true }];
+  } catch (error) {
+    log('quote_draft_failed', { message: error instanceof Error ? error.message : String(error) });
+    return [500, { error: 'draft_failed' }];
+  }
+};
+
+const STOREFRONT_ROUTES: Record<string, (request: Request, env: Env) => Promise<[number, unknown]>> = {
+  [CHECKOUT_ROUTE]: handleCheckout,
+  [QUOTE_ROUTE]: handleQuoteRequest,
+};
+
 export default {
   async fetch(request, env): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -84,7 +116,8 @@ export default {
       return request.method === 'POST' ? handleOrderCreated(request, env) : new Response(null, { status: 405 });
     }
 
-    if (pathname !== ROUTE) return json(404, { error: 'not_found' });
+    const handler = STOREFRONT_ROUTES[pathname];
+    if (!handler) return json(404, { error: 'not_found' });
 
     const origin = allowedOrigin(request.headers.get('Origin'), env.ALLOWED_ORIGINS);
     if (!origin) return json(403, { error: 'forbidden_origin' });
@@ -94,10 +127,10 @@ export default {
     if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' }, { ...cors, Allow: 'POST' });
 
     const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-    const { success } = await env.CHECKOUT_RATE_LIMITER.limit({ key: `checkout:${ip}` });
+    const { success } = await env.CHECKOUT_RATE_LIMITER.limit({ key: `${pathname}:${ip}` });
     if (!success) return json(429, { error: 'rate_limited' }, cors);
 
-    const [status, body] = await handleCheckout(request, env);
+    const [status, body] = await handler(request, env);
     return json(status, body, cors);
   },
 } satisfies ExportedHandler<Env>;

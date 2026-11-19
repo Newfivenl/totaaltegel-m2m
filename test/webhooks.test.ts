@@ -111,6 +111,16 @@ describe('checkMaatwerkBypass', () => {
   it('flags a correctly priced maatwerk line that did not come from a draft', () => {
     expect(checkMaatwerkBypass(order({ source_name: 'web' })).reasons).toEqual(['source:web']);
   });
+
+  it('accepts a quote draft whose sill price staff changed', () => {
+    const check = checkMaatwerkBypass(order({ tags: 'VIP, offerte-aanvraag', line_items: [sillLine('60.00')] }));
+    expect(check).toEqual({ bypassed: false, reasons: [] });
+  });
+
+  it('still flags a quote-tagged order that did not come from a draft', () => {
+    const check = checkMaatwerkBypass(order({ source_name: 'web', tags: 'offerte-aanvraag', line_items: [sillLine('0.85')] }));
+    expect(check.reasons).toEqual(['source:web', 'price:85!=6800']);
+  });
 });
 
 describe('orders/create webhook', () => {
