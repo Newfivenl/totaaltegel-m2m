@@ -1,8 +1,10 @@
 import { PriceMismatchError, quoteCheckout } from './quote';
 import { InvalidRequestError, parseCheckoutRequest } from './request';
 import { buildDraftInput, fetchVariants, findOpenDraftId, saveDraft } from './shopify';
+import { handleOrderCreated } from './webhooks';
 
 const ROUTE = '/maatwerk-checkout';
+const ORDERS_CREATE_WEBHOOK = '/webhooks/orders-create';
 const MAX_BODY_BYTES = 256 * 1024;
 
 const allowedOrigin = (origin: string | null, allowList: string): string | null => {
@@ -77,6 +79,11 @@ const handleCheckout = async (request: Request, env: Env): Promise<[number, unkn
 export default {
   async fetch(request, env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
+    if (pathname === ORDERS_CREATE_WEBHOOK) {
+      return request.method === 'POST' ? handleOrderCreated(request, env) : new Response(null, { status: 405 });
+    }
+
     if (pathname !== ROUTE) return json(404, { error: 'not_found' });
 
     const origin = allowedOrigin(request.headers.get('Origin'), env.ALLOWED_ORIGINS);

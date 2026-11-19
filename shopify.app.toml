@@ -7,7 +7,7 @@ application_url = "http://localhost:3456"
 embedded = false
 
 [access_scopes]
-scopes = "read_draft_orders,write_draft_orders,read_products"
+scopes = "read_draft_orders,write_draft_orders,read_products,read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
 
 [auth]
 # Used once by `npm run token` to install the app and get the offline access token.
@@ -15,3 +15,7 @@ redirect_urls = ["http://localhost:3456/callback"]
 
 [webhooks]
 api_version = "2026-10"
+
+[[webhooks.subscriptions]]
+topics = ["orders/create"]
+uri = "https://totaaltegel-maatwerk-checkout.newfive.workers.dev/webhooks/orders-create"

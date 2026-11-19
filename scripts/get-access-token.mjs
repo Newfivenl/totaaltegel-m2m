@@ -10,7 +10,15 @@ import { createServer } from 'node:http';
 
 const PORT = Number(process.env.PORT ?? 3456);
 const REDIRECT_URI = `http://localhost:${PORT}/callback`;
-const SCOPES = 'read_draft_orders,write_draft_orders,read_products';
+const SCOPES = [
+  'read_draft_orders',
+  'write_draft_orders',
+  'read_products',
+  'read_orders',
+  'write_orders',
+  'read_merchant_managed_fulfillment_orders',
+  'write_merchant_managed_fulfillment_orders',
+].join(',');
 const API_VERSION = '2026-10';
 const DEV_VARS = '.dev.vars';
 const TOKEN_KEY = 'SHOPIFY_ADMIN_ACCESS_TOKEN';

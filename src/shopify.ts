@@ -14,11 +14,11 @@ type GraphqlResponse<T> = {
   errors?: { message: string; extensions?: { code?: string } }[];
 };
 
-type UserError = { field: string[] | null; message: string };
+export type UserError = { field: string[] | null; message: string };
 
 type SavedDraft = { id: string; name: string; invoiceUrl: string | null; status: string };
 
-const adminGraphql = async <T>(env: Env, query: string, variables: Record<string, unknown>): Promise<T> => {
+export const adminGraphql = async <T>(env: Env, query: string, variables: Record<string, unknown>): Promise<T> => {
   const response = await fetch(`https://${env.SHOPIFY_SHOP}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`, {
     method: 'POST',
     headers: {

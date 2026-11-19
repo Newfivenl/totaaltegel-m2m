@@ -1,5 +1,5 @@
 SHOPIFY_SHOP=totaaltegel.myshopify.com
-# Only used by `npm run token`; the Worker itself only needs the access token.
+# Client ID: only for `npm run token`. Client secret: also on the Worker, to verify webhook signatures.
 SHOPIFY_CLIENT_ID=replace-me
 SHOPIFY_CLIENT_SECRET=replace-me
 # Written by `npm run token`.
