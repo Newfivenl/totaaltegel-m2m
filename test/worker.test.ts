@@ -318,7 +318,7 @@ describe('quote request', () => {
     expect(mutation.query).toContain('draftOrderCreate');
     expect(mutation.variables.input).toMatchObject({
       presentmentCurrencyCode: 'EUR',
-      tags: ['offerte-aanvraag'],
+      tags: ['offerte-aanvraag', 'quote'],
       email: 'jan@example.com',
       note: 'Vensterbank\n40 x 200 cm',
       shippingAddress: {
@@ -330,6 +330,7 @@ describe('quote request', () => {
         countryCode: 'NL',
       },
     });
+    expect(mutation.variables.input.billingAddress).toEqual(mutation.variables.input.shippingAddress);
     expect(mutation.variables.input).not.toHaveProperty('phone');
 
     const [sill, miter] = mutation.variables.input.lineItems;

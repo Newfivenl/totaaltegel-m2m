@@ -4,6 +4,7 @@ import type { CheckoutRequest, QuoteRequest } from './request';
 
 export const DRAFT_TAG = 'maatwerk-storefront';
 export const QUOTE_TAG = 'offerte-aanvraag';
+const ERP_QUOTE_TAG = 'quote';
 const QUOTE_COUNTRY = 'NL';
 const CART_TOKEN_ATTRIBUTE = 'cart_token';
 const CURRENCY = 'EUR';
@@ -155,23 +156,23 @@ const splitName = (name: string) => {
 };
 
 // Phone stays in the note: Shopify rejects drafts whose phone isn't valid E.164.
+// The ERP turns every new draft order into a quote and refuses one without an address.
 export const buildQuoteDraftInput = (request: QuoteRequest, lines: DraftLine[]) => {
   const { customer } = request;
+  const address = customer.address && {
+    ...splitName(customer.name),
+    address1: customer.address,
+    ...(customer.zip && { zip: customer.zip }),
+    ...(customer.city && { city: customer.city }),
+    countryCode: QUOTE_COUNTRY,
+  };
 
   return {
     presentmentCurrencyCode: CURRENCY,
-    tags: [QUOTE_TAG],
+    tags: [QUOTE_TAG, ERP_QUOTE_TAG],
     email: customer.email,
     ...(request.note && { note: request.note }),
-    ...(customer.address && {
-      shippingAddress: {
-        ...splitName(customer.name),
-        address1: customer.address,
-        ...(customer.zip && { zip: customer.zip }),
-        ...(customer.city && { city: customer.city }),
-        countryCode: QUOTE_COUNTRY,
-      },
-    }),
+    ...(address && { shippingAddress: address, billingAddress: address }),
     lineItems: draftLineItems(lines),
   };
 };

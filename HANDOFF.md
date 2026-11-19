@@ -37,9 +37,10 @@ Now each sill is one cart line of quantity 1 carrying its size. Checkout goes th
 
 The "Offerte aanvragen" dialog on the product page (`snippets/quote-request-dialog.liquid`, `scripts/quote-request.js`) still sends Shopify's contact-form email. When Theme settings → Prices → Quote form → **Draft order URL** is set (`…/quote-request`), it also posts the quote to the Worker, which creates a draft order for staff to finish and send:
 
-- Tag `offerte-aanvraag`, customer email, shipping address (country NL), and the same summary as the email as the note. The phone number is only in the note.
+- Tags `offerte-aanvraag` + `quote`, customer email, shipping and billing address (country NL), and the same summary as the email as the note. The phone number is only in the note. No invoice or checkout link is sent; the draft is only a draft.
+- The ERP middleware (`totaaltegel-erp-integration`, `pushShopifyDraftOrderToErp`) turns every new draft order into an ERP quote and refuses drafts without an address, so these quotes reach the ERP as quotes.
 - Vensterbank/raamdorpel: one quantity-1 line per piece plus verstek/neut, priced by the Worker formula. `_expected_line_cents` is rewritten to the Worker price.
-- Tiles: the tile variant at quantity 1 with area, material and installation as line properties (staff set the real quantity), plus linked accessories (plinth, adhesive, grout, care) at their calculated quantity. Accessories without a linked product appear only in the note.
+- Tiles: the tile variant with area, material and installation as line properties, at the quantity add-to-cart would use for the entered m² without cutting loss (m² for per-m² variants, otherwise boxes or boxes × pack size; 1 if the page has no tile calculator), plus linked accessories (plinth, adhesive, grout, care) at their calculated quantity. Accessories without a linked product appear only in the note.
 - The request is fire-and-forget (`keepalive`, `text/plain` so there's no CORS preflight). If it fails, the customer still sees success and the email still arrives; look for `quote_draft_failed` in the logs.
 - The safety net doesn't hold paid orders that came from a draft tagged `offerte-aanvraag`, so staff can change prices on a quote.
 
@@ -76,7 +77,7 @@ Secrets never go in git: `.dev.vars` is gitignored and `.githooks/pre-commit` bl
 6. All vensterbank/raamdorpel products use the `vensterbank` / `raamdorpel` product template. Without it there's no calculator and no maatwerk line.
 7. Translators added the four `cart.errors.maatwerk_*` strings to `nl.json`.
 8. Turn on the theme setting with the Worker URL. Test one sill to checkout on the live site.
-9. Set Prices → Quote form → Draft order URL to `…/quote-request`. Send one test quote and check the draft. This works even while the checkout setting is off.
+9. Quote draft orders: enabled on live (Prices → Quote form → Draft order URL = `…/quote-request`).
 
 ## Runbook
 

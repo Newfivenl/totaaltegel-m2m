@@ -38,19 +38,17 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 
 **Webhook safety net: live (2026-11-19).** Scopes granted (order + merchant-managed fulfillment orders), new token installed. Subscription `gid://shopify/WebhookSubscription/2591017206103` (`ORDERS_CREATE` → `/webhooks/orders-create`) created via Admin API `webhookSubscriptionCreate` (shop-specific; the Dev Dashboard has no webhook form). Unsigned calls get 401.
 
-**Quote requests → draft order: Worker live (2026-11-19).** `POST /quote-request` creates a draft tagged `offerte-aanvraag` (email, NL shipping address, summary as note, sills priced by the Worker). Live test via curl with variant `55807134892375` 40×200 → `#D12`, €333,60, address OK; deleted. Theme side built in `totaaltegel-theme` (setting Prices → Quote form → **Draft order URL**), **not committed or pushed yet**.
+**Quote requests → draft order: Worker live (2026-11-19).** `POST /quote-request` creates a draft tagged `offerte-aanvraag` (email, NL shipping address, summary as note, sills priced by the Worker). Live test via curl with variant `55807134892375` 40×200 → `#D12`, €333,60, address OK; deleted. Theme side pushed to `totaaltegel-theme` `main` and **enabled on live** (Prices → Quote form → **Draft order URL**). Drafts are tagged `offerte-aanvraag` + `quote`, carry shipping + billing address, and reach the ERP as quotes via the ERP middleware's `draft_orders/create` hook.
 
-**Manual test order + ERP delivery checked OK (2026-11-19, with Bart).** Theme code is on `main` of `totaaltegel-theme` (`f49c920`); the theme setting is still **off** on the live theme.
+**Manual test order + ERP delivery checked OK (2026-11-19, with Bart).** Maatwerk checkout is **enabled on the live theme**; cart flow confirmed working. VAT confirmed correct (2026-11-19).
 
-**Open before go-live** (full checklist in `HANDOFF.md`):
+**Still open** (full checklist in `HANDOFF.md`):
 
 1. **Safety net on the test order:** confirm it has **no** `maatwerk-prijs-controle` tag and no fulfillment hold (proves `source_name = shopify_draft_order`). If it was held: fix `DRAFT_ORDER_SOURCE` in `src/webhooks.ts`.
-2. **VAT:** the draft checkout added 21% on top of the sill price. Correct only if store prices are excl. VAT.
-3. **Protected customer data access** (orders) granted in the Dev Dashboard, or Shopify may not deliver the webhook.
-4. **Office IP** (`212.178.101.182`) removed from the app's IP allowlist again.
-5. **ERP** skips orders tagged `maatwerk-prijs-controle`.
-6. **Enable** theme setting Cart → Maatwerk checkout with the Worker URL `…/maatwerk-checkout`.
-7. **Quotes:** commit/push the theme change, set Prices → Quote form → Draft order URL to `…/quote-request`, send one test quote from the PDP (this also emails the shop).
+2. **Protected customer data access** (orders) granted in the Dev Dashboard, or Shopify may not deliver the webhook.
+3. **Office IP** (`212.178.101.182`) removed from the app's IP allowlist again.
+4. **ERP** skips orders tagged `maatwerk-prijs-controle`.
+5. **ERP quote gate:** the ERP middleware turns *every* new draft into an ERP quote, including the `maatwerk-storefront` checkout drafts (refused without address → SRE alert, or a stray quote when an address is present). Gate it in `totaaltegel-erp-integration` (skip `maatwerk-storefront`). Test draft `#D12` ("Newfive Test") likely reached the ERP as a quote; remove it there.
 
 ## Live configuration
 
@@ -65,7 +63,7 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 | App URL / redirect | `http://localhost:3456` / `http://localhost:3456/callback` (only for `npm run token`) |
 | App IP allowlist (enforced) | `2a06:98c0:3600::103` (Worker) + Damy’s home IPv4 (see Dev Dashboard). Office IP added temporarily on 2026-11-19 for the webhook setup; remove it |
 | Webhook subscription | `gid://shopify/WebhookSubscription/2591017206103`, `ORDERS_CREATE` → `/webhooks/orders-create` (shop-specific, created via Admin API) |
-| Theme switch | `totaaltegel-theme` setting `maatwerk_checkout_enabled` + `maatwerk_checkout_url` (Cart group), **off** on live |
+| Theme switches | `totaaltegel-theme`: `maatwerk_checkout_enabled` + `maatwerk_checkout_url` (Cart group) and `quote_draft_url` (Prices → Quote form), all **on** in live `settings_data.json` |
 
 ## Decision Log
 
@@ -92,6 +90,6 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 
 ## Session Handoff
 
-- **2026-11-19 (quote requests as draft orders):** Added `POST /quote-request` + quote exemption in the safety net, 50 tests, deployed, live-tested with curl (`#D12`, deleted). Theme: quote dialog posts to the Worker when Prices → Quote form → Draft order URL is set; calculator snapshot exposes `draftLines`; `assets/main.js` rebuilt. Theme changes are local only (theme `main` is 9 commits behind `origin`, pushing publishes). **Next:** pull + commit + push the theme, set the URL, one PDP test quote; then the go-live list above.
+- **2026-11-19 (quote requests as draft orders):** Added `POST /quote-request` + quote exemption in the safety net, 50 tests, deployed, live-tested with curl (`#D12`, deleted). Theme: quote dialog posts to the Worker when Prices → Quote form → Draft order URL is set; calculator snapshot exposes `draftLines`; `assets/main.js` rebuilt. Follow-up same day: tile quotes get a real quantity, drafts also tagged `quote` with billing address; theme pulled, committed, pushed, `quote_draft_url` enabled on live. Maatwerk checkout was already enabled on live; cart confirmed working, VAT confirmed OK. **Next:** ERP gate for checkout drafts (item 5 under Still open), first real quote check.
 - **2026-11-19 (bundle research, safety net, theme integration):** Researched bundles instead of drafts: not possible without Plus. Added the `orders/create` safety net: deployed, scopes granted, subscription created, committed (`c260bf9`). Theme integration committed in `totaaltegel-theme` (`f49c920`) behind the theme setting **Cart → Maatwerk checkout** (off on live). Verified on the dev theme; manual test order reached the ERP correctly (checked with Bart). Wrote `HANDOFF.md`. **Next:** the "Open before go-live" list above, then enable the theme setting.
 - **2026-11-18 (Worker setup):** Built the Worker from the handoff spec, deployed it, created the Shopify app (Dev Dashboard, Newfive org), installed it via `npm run token`, enforced the IP allowlist, verified access. Secrets out of git (`.gitignore` + `.githooks/pre-commit`, enabled via `npm install`).
