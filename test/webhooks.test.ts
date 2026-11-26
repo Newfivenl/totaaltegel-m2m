@@ -120,6 +120,22 @@ describe('checkMaatwerkBypass', () => {
     expect(check.reasons).toEqual(['source:web', 'price:4701!=unknown']);
   });
 
+  it('flags a draft line whose expected price is not plain digits', () => {
+    const check = checkMaatwerkBypass(order({ line_items: [sillLine('68.00', '0x1a90')] }));
+    expect(check.reasons).toEqual(['price:6800!=unknown']);
+  });
+
+  it('flags a line with a near-duplicate _expected_line_cents', () => {
+    const line = sillLine('68.00');
+    line.properties.push({ name: ' _Expected_line_cents', value: '1' });
+    expect(checkMaatwerkBypass(order({ line_items: [line] })).bypassed).toBe(true);
+  });
+
+  it('checks a line whose _maatwerk is written differently', () => {
+    const line = { price: '0.85', quantity: 1, properties: [{ name: '_Maatwerk ', value: ' 1' }] };
+    expect(checkMaatwerkBypass(order({ source_name: 'web', line_items: [line] })).bypassed).toBe(true);
+  });
+
   it('flags a hand-posted line with a near-duplicate ERP key', () => {
     const forged = { price: '47.01', quantity: 1, properties: [{ name: ' _AREA_M2', value: '500' }] };
     expect(checkMaatwerkBypass(order({ source_name: 'web', line_items: [forged] })).bypassed).toBe(true);

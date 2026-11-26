@@ -55,9 +55,28 @@ const orderTags = (order: OrderWebhook): string[] =>
 // (e.g. /cart/add with `_area_m2: 500` at the catalog price of 1 m²), so it is checked as a maatwerk line too.
 const ERP_SIZE_PROPERTIES = ['_calc_mode', '_area_m2', '_boxes', '_length_cm', '_depth_cm'];
 
+const normalizedKey = (name: unknown): string => String(name).trim().toLowerCase();
+
+// Matches names trimmed and lowercased, like a lenient ERP reader might; null when the name appears twice,
+// because then it is unclear which value the ERP reads.
+const lenientProperty = (line: WebhookLineItem, name: string): string | null | undefined => {
+  const matches = (line.properties ?? []).filter((entry) => normalizedKey(entry.name) === name);
+  if (matches.length > 1) return null;
+  const [match] = matches;
+  return match ? String(match.value).trim() : undefined;
+};
+
 const isPricedByDraft = (line: WebhookLineItem): boolean =>
-  property(line, '_maatwerk') === '1' ||
-  (line.properties ?? []).some((entry) => ERP_SIZE_PROPERTIES.includes(String(entry.name).trim().toLowerCase()));
+  lenientProperty(line, '_maatwerk') !== undefined ||
+  (line.properties ?? []).some((entry) => ERP_SIZE_PROPERTIES.includes(normalizedKey(entry.name)));
+
+// Same strict format the Worker accepts; anything else (`0x125d`, `4.701e3`, a duplicate key) is unknown.
+const expectedCents = (line: WebhookLineItem): number => {
+  const value = property(line, '_expected_line_cents');
+  const lenient = lenientProperty(line, '_expected_line_cents');
+  if (value === undefined || lenient === null || !/^\d+$/.test(value)) return Number.NaN;
+  return Number(value);
+};
 
 // A maatwerk line only has the right price if it came through the draft order with priceOverride.
 // Any other path (direct /checkout, old links) charges the shared catalog price.
@@ -73,7 +92,7 @@ export const checkMaatwerkBypass = (order: OrderWebhook): BypassCheck => {
   if (fromDraft && orderTags(order).includes(QUOTE_TAG)) return { bypassed: false, reasons: [] };
 
   for (const line of maatwerkLines) {
-    const expected = Number(property(line, '_expected_line_cents'));
+    const expected = expectedCents(line);
     const charged = moneyToCents(line.price ?? '');
 
     if (!Number.isFinite(expected) || !Number.isFinite(charged) || !withinTolerance(expected, charged)) {
