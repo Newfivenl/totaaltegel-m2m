@@ -138,11 +138,26 @@ export const findOpenDraftId = async (env: Env, cartToken: string): Promise<stri
   return match?.id ?? null;
 };
 
+// Cart-only bookkeeping (stepper lock, line links, the box count the Worker already priced): left out of the
+// draft so the order shows the visible properties plus only what the ERP and the safety net read
+// (`_maatwerk`, `_calc_mode`, `_area_m2`, `_length_cm`, `_depth_cm`, `_expected_line_cents`).
+const CART_ONLY_PROPERTIES = new Set([
+  '_qty_locked',
+  '_qty_unit',
+  '_qty_display_divisor',
+  '_line_uid',
+  '_parent_uid',
+  '_addon',
+  '_boxes',
+]);
+
 const draftLineItems = (lines: DraftLine[]) =>
   lines.map((line) => ({
     variantId: variantGid(line.variantId),
     quantity: line.quantity,
-    customAttributes: Object.entries(line.properties).map(([key, value]) => ({ key, value })),
+    customAttributes: Object.entries(line.properties)
+      .filter(([key]) => !CART_ONLY_PROPERTIES.has(key))
+      .map(([key, value]) => ({ key, value })),
     ...(line.priceOverrideCents !== null && {
       priceOverride: { amount: centsToAmount(line.priceOverrideCents), currencyCode: CURRENCY },
     }),

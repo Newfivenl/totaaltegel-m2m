@@ -219,7 +219,18 @@ describe('tile lines', () => {
       priceOverride: { amount: '2369.30', currencyCode: 'EUR' },
     });
     expect(lineItem.customAttributes).toContainEqual({ key: '_area_m2', value: '50.4' });
-    expect(lineItem.customAttributes).toContainEqual({ key: '_boxes', value: '35' });
+    expect(lineItem.customAttributes).toContainEqual({ key: 'Dozen', value: '35' });
+  });
+
+  it('leaves cart-only properties out of the draft line', async () => {
+    const response = await checkout({
+      expectedTotalCents: 236_930,
+      lines: [tileLine({ _qty_locked: '1', _line_uid: 'u1' })],
+    });
+
+    expect(response.status).toBe(200);
+    const keys = mutationCall()!.variables.input.lineItems[0].customAttributes.map((attribute: any) => attribute.key);
+    expect(keys).toEqual(['_maatwerk', '_calc_mode', '_area_m2', '_expected_line_cents', 'Oppervlakte', 'Dozen']);
   });
 
   it('returns 409 when _expected_line_cents does not match the box price', async () => {
