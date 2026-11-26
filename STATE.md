@@ -1,6 +1,6 @@
 # Project State
 
-_Last updated: 2026-11-19_
+_Last updated: 2026-11-26_
 
 Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behind maatwerk checkout. Agents: read this at session start; update after significant work.
 
@@ -48,7 +48,7 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 2. **Protected customer data access** (orders) granted in the Dev Dashboard, or Shopify may not deliver the webhook.
 3. **Office IP** (`212.178.101.182`) removed from the app's IP allowlist again.
 4. **ERP** skips orders tagged `maatwerk-prijs-controle`.
-5. **ERP quote gate:** the ERP middleware turns *every* new draft into an ERP quote, including the `maatwerk-storefront` checkout drafts (refused without address → SRE alert, or a stray quote when an address is present). Gate it in `totaaltegel-erp-integration` (skip `maatwerk-storefront`). Test draft `#D12` ("Newfive Test") likely reached the ERP as a quote; remove it there.
+5. **ERP quote gate:** (more urgent since 2026-11-26: every cart with an m²-priced tile now checks out through a `maatwerk-storefront` draft) the ERP middleware turns *every* new draft into an ERP quote, including the `maatwerk-storefront` checkout drafts (refused without address → SRE alert, or a stray quote when an address is present). Gate it in `totaaltegel-erp-integration` (skip `maatwerk-storefront`). Test draft `#D12` ("Newfive Test") likely reached the ERP as a quote; remove it there.
 
 ## Live configuration
 
@@ -66,6 +66,8 @@ Living status for **totaaltegel-m2m** (NewFivePlus): the Cloudflare Worker behin
 | Theme switches | `totaaltegel-theme`: `maatwerk_checkout_enabled` + `maatwerk_checkout_url` (Cart group) and `quote_draft_url` (Prices → Quote form), all **on** in live `settings_data.json` |
 
 ## Decision Log
+
+- **2026-11-26 — Tiles on the draft flow.** m²-priced tile lines carry `_calc_mode=tiles`, `_boxes`, `_area_m2`; the Worker prices `_boxes` × variant `erp.pieces_per_box` × price (area in thousandths, rounded once) and rejects an `_area_m2` that doesn't match. One quantity-1 line, so the ERP reads m² and boxes from the properties. Deployed (version `b4bea2f5`); probe against live variant 55816266580311 (35 × 1,44 m² at €47,01) computed 236930.
 
 - **2026-11-19 — Quote drafts next to the contact email, fire-and-forget.** The dialog keeps the native Shopify contact-form submit (bot protection hooks into it) and sends the draft with `fetch(keepalive)` + `text/plain` (no preflight). A failed draft never blocks the email. Every submit creates a new draft (no cart token to dedupe on). Paid orders from a draft tagged `offerte-aanvraag` skip the price check in the safety net because staff may renegotiate quote prices. Tile quotes carry the tile at quantity 1 (the dialog only knows m², not boxes); staff set the quantity.
 - **2026-11-19 — Stay on draft orders.** Cart Transform (bundle `lineExpand` / `lineUpdate`) would avoid drafts, but Functions in custom apps need Shopify Plus and the store isn’t on Plus.

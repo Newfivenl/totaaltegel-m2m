@@ -21,6 +21,18 @@ Now each sill is one cart line of quantity 1 carrying its size. Checkout goes th
 
    Verstek and neut stay normal lines, linked by `_line_uid` / `_parent_uid`.
 
+   **Tiles (m²-priced, since 2026-11-26):** the calculator rounds up to whole boxes and adds one line, quantity 1, priced on the exact m² in those boxes (35 × 1,44 = 50,4 m² × €47,01 = €2.369,30):
+
+   | Property | Meaning |
+   |---|---|
+   | `_maatwerk` | `1` |
+   | `_calc_mode` | `tiles` |
+   | `_boxes` | Whole boxes ordered. The ERP reads this |
+   | `_area_m2` | m² in those boxes (`_boxes` × variant `erp.pieces_per_box`), dot decimal. The ERP reads this instead of the quantity |
+   | `_expected_line_cents` | Line price the customer saw |
+
+   The Worker recomputes the area from `_boxes` and the variant's own `erp.pieces_per_box` (`_area_m2` must match, else 400) and the price as round(area × €/m²), rounded once. The SMART Shipping script (v4) reads the m² from `_area_m2`, because the line quantity is 1.
+
 2. **Cart** (`assets/cart-store.js`): Shopify's cart still holds the catalog price, so the cart shows `_expected_line_cents` for maatwerk lines (`lineTotalCents`, `subtotalCents`).
 
 3. **Checkout button** (drawer, cart page, add-to-cart modal, discount field all call `$store.cart.checkout()`):
