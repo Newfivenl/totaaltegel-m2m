@@ -51,10 +51,17 @@ const property = (line: WebhookLineItem, name: string): string | undefined => {
 const orderTags = (order: OrderWebhook): string[] =>
   (order.tags ?? '').split(',').map((tag) => tag.trim().toLowerCase());
 
+// Properties the ERP reads the size from. A line carrying any of them without `_maatwerk` was posted by hand
+// (e.g. /cart/add with `_area_m2: 500` at the catalog price of 1 m²), so it is checked as a maatwerk line too.
+const ERP_SIZE_PROPERTIES = ['_calc_mode', '_area_m2', '_boxes', '_length_cm', '_depth_cm'];
+
+const isPricedByDraft = (line: WebhookLineItem): boolean =>
+  property(line, '_maatwerk') === '1' || ERP_SIZE_PROPERTIES.some((name) => property(line, name) !== undefined);
+
 // A maatwerk line only has the right price if it came through the draft order with priceOverride.
 // Any other path (direct /checkout, old links) charges the shared catalog price.
 export const checkMaatwerkBypass = (order: OrderWebhook): BypassCheck => {
-  const maatwerkLines = (order.line_items ?? []).filter((line) => property(line, '_maatwerk') === '1');
+  const maatwerkLines = (order.line_items ?? []).filter(isPricedByDraft);
   if (!maatwerkLines.length) return { bypassed: false, reasons: [] };
 
   const reasons: string[] = [];

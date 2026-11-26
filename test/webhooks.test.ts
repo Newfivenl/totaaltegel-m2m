@@ -112,6 +112,29 @@ describe('checkMaatwerkBypass', () => {
     expect(checkMaatwerkBypass(order({ source_name: 'web' })).reasons).toEqual(['source:web']);
   });
 
+  it('flags a hand-posted tile line with an ERP size but no _maatwerk', () => {
+    const forged = { price: '47.01', quantity: 1, properties: [{ name: '_area_m2', value: '500' }, { name: '_boxes', value: '348' }] };
+    const check = checkMaatwerkBypass(order({ source_name: 'web', line_items: [forged] }));
+
+    expect(check.bypassed).toBe(true);
+    expect(check.reasons).toEqual(['source:web', 'price:4701!=unknown']);
+  });
+
+  it('accepts a draft-order tile line charged at the expected price', () => {
+    const tile = {
+      price: '2369.30',
+      quantity: 1,
+      properties: [
+        { name: '_maatwerk', value: '1' },
+        { name: '_calc_mode', value: 'tiles' },
+        { name: '_area_m2', value: '50.4' },
+        { name: '_boxes', value: '35' },
+        { name: '_expected_line_cents', value: '236930' },
+      ],
+    };
+    expect(checkMaatwerkBypass(order({ line_items: [tile] }))).toEqual({ bypassed: false, reasons: [] });
+  });
+
   it('accepts a quote draft whose sill price staff changed', () => {
     const check = checkMaatwerkBypass(order({ tags: 'VIP, offerte-aanvraag', line_items: [sillLine('60.00')] }));
     expect(check).toEqual({ bypassed: false, reasons: [] });
