@@ -70,8 +70,9 @@ const assertModeFitsProduct = (mode: string | undefined, variant: VariantInfo) =
 // Properties the ERP reads the size from; a regular (catalog-priced) line must not carry them.
 const ERP_SIZE_PROPERTIES = ['_calc_mode', '_area_m2', '_boxes', '_length_cm', '_depth_cm'];
 
+// Keys are compared trimmed and lowercased, so `_Area_m2 ` can't slip past while a lenient reader still finds it.
 const hasErpSize = (properties: Record<string, string>): boolean =>
-  ERP_SIZE_PROPERTIES.some((name) => properties[name] !== undefined);
+  Object.keys(properties).some((key) => ERP_SIZE_PROPERTIES.includes(key.trim().toLowerCase()));
 
 const parseCents = (value: string | undefined): number => {
   if (value === undefined || !/^\d+$/.test(value.trim())) throw new InvalidRequestError('invalid_line');
@@ -88,6 +89,16 @@ const assertWithinWidthBounds = (depthCm: number | undefined, variant: VariantIn
 
 export const isMaatwerkLine = (properties: Record<string, string>): boolean => properties._maatwerk === '1';
 
+// A maatwerk line must use the exact keys; a near-duplicate (`_area_m2 ` next to `_area_m2`) could be read instead.
+const assertExactSizeKeys = (properties: Record<string, string>) => {
+  for (const key of Object.keys(properties)) {
+    const normalized = key.trim().toLowerCase();
+    if (normalized !== key && (ERP_SIZE_PROPERTIES.includes(normalized) || normalized === '_maatwerk')) {
+      throw new InvalidRequestError('invalid_line');
+    }
+  }
+};
+
 const sillPieceCents = (properties: Record<string, string>, variant: VariantInfo): number => {
   const mode = properties._calc_mode;
   if (!isCalcMode(mode)) throw new InvalidRequestError('invalid_line');
@@ -102,10 +113,10 @@ const sillPieceCents = (properties: Record<string, string>, variant: VariantInfo
 };
 
 const parseBoxes = (value: string | undefined): number => {
-  if (value === undefined || !/^\d+$/.test(value.trim())) throw new InvalidRequestError('invalid_line');
+  if (value === undefined || !/^[1-9]\d{0,4}$/.test(value)) throw new InvalidRequestError('invalid_line');
 
-  const boxes = Number(value.trim());
-  if (boxes < 1 || boxes > MAX_BOXES) throw new InvalidRequestError('invalid_line');
+  const boxes = Number(value);
+  if (boxes > MAX_BOXES) throw new InvalidRequestError('invalid_line');
   return boxes;
 };
 
@@ -128,6 +139,7 @@ const tileLineCentsFor = (properties: Record<string, string>, variant: VariantIn
 };
 
 const maatwerkLineCents = (properties: Record<string, string>, variant: VariantInfo): number => {
+  assertExactSizeKeys(properties);
   assertModeFitsProduct(properties._calc_mode, variant);
   return properties._calc_mode === TILE_CALC_MODE ? tileLineCentsFor(properties, variant) : sillPieceCents(properties, variant);
 };
@@ -196,6 +208,7 @@ export const quoteRequestLines = (requestLines: CheckoutLine[], variants: Map<st
     const variant = variantFor(variants, line);
 
     if (!isMaatwerkLine(line.properties)) {
+      if (hasErpSize(line.properties)) throw new InvalidRequestError('invalid_line');
       lines.push({ ...line, priceOverrideCents: null });
       computedCents += variant.priceCents * line.quantity;
       continue;

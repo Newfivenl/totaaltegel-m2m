@@ -56,7 +56,8 @@ const orderTags = (order: OrderWebhook): string[] =>
 const ERP_SIZE_PROPERTIES = ['_calc_mode', '_area_m2', '_boxes', '_length_cm', '_depth_cm'];
 
 const isPricedByDraft = (line: WebhookLineItem): boolean =>
-  property(line, '_maatwerk') === '1' || ERP_SIZE_PROPERTIES.some((name) => property(line, name) !== undefined);
+  property(line, '_maatwerk') === '1' ||
+  (line.properties ?? []).some((entry) => ERP_SIZE_PROPERTIES.includes(String(entry.name).trim().toLowerCase()));
 
 // A maatwerk line only has the right price if it came through the draft order with priceOverride.
 // Any other path (direct /checkout, old links) charges the shared catalog price.

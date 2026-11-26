@@ -120,6 +120,11 @@ describe('checkMaatwerkBypass', () => {
     expect(check.reasons).toEqual(['source:web', 'price:4701!=unknown']);
   });
 
+  it('flags a hand-posted line with a near-duplicate ERP key', () => {
+    const forged = { price: '47.01', quantity: 1, properties: [{ name: ' _AREA_M2', value: '500' }] };
+    expect(checkMaatwerkBypass(order({ source_name: 'web', line_items: [forged] })).bypassed).toBe(true);
+  });
+
   it('accepts a draft-order tile line charged at the expected price', () => {
     const tile = {
       price: '2369.30',

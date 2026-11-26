@@ -221,6 +221,12 @@ describe('tile lines', () => {
     expect(await response.json()).toEqual({ error: 'invalid_line' });
   });
 
+  it.each(['035', ' 35', '0'])('returns 400 for _boxes %j', async (boxes) => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _boxes: boxes })] });
+
+    expect(response.status).toBe(400);
+  });
+
   it('returns 400 for a fractional box count', async () => {
     const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _boxes: '34.5' })] });
 
@@ -251,6 +257,19 @@ describe('tile lines', () => {
 
   it.each(['5.04e1', '0x32', '50,4', ' 50.4abc'])('returns 400 for _area_m2 %j', async (area) => {
     const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _area_m2: area })] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for a catalog-priced line with a near-duplicate ERP key', async () => {
+    const forged = { variantId: TILE_VARIANT, quantity: 1, properties: { '_Area_m2 ': '500' } };
+    const response = await checkout({ expectedTotalCents: 4701, lines: [forged] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for a tile line with a near-duplicate _area_m2 key', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ '_area_m2 ': '500' })] });
 
     expect(response.status).toBe(400);
   });
