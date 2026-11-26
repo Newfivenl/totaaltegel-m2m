@@ -19,7 +19,7 @@ type GraphqlResponse<T> = {
 
 export type UserError = { field: string[] | null; message: string };
 
-type SavedDraft = { id: string; name: string; invoiceUrl: string | null; status: string };
+type SavedDraft = { id: string; name: string; invoiceUrl: string | null; status: string; ready: boolean };
 
 export const adminGraphql = async <T>(env: Env, query: string, variables: Record<string, unknown>): Promise<T> => {
   const response = await fetch(`https://${env.SHOPIFY_SHOP}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`, {
@@ -193,6 +193,7 @@ const DRAFT_FIELDS = /* GraphQL */ `
     name
     invoiceUrl
     status
+    ready
   }
   userErrors {
     field
@@ -242,4 +243,31 @@ export const saveDraft = async (
 
   const data = await adminGraphql<{ draftOrderCreate: DraftPayload }>(env, CREATE_DRAFT_MUTATION, { input });
   return unwrapDraft(data.draftOrderCreate);
+};
+
+const DRAFT_READY_QUERY = /* GraphQL */ `
+  query MaatwerkDraftReady($id: ID!) {
+    draftOrder(id: $id) {
+      ready
+    }
+  }
+`;
+
+const READY_POLL_MS = 400;
+const READY_MAX_POLLS = 10;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Shopify recalculates a draft asynchronously after create/update; until `ready`, its invoice URL
+// shows "This invoice is not available yet". Returns false when it is still not ready after ~4 s.
+export const waitUntilReady = async (env: Env, draft: SavedDraft, pollMs = READY_POLL_MS): Promise<boolean> => {
+  if (draft.ready) return true;
+
+  for (let poll = 0; poll < READY_MAX_POLLS; poll++) {
+    await sleep(pollMs);
+    const data = await adminGraphql<{ draftOrder: { ready: boolean } | null }>(env, DRAFT_READY_QUERY, { id: draft.id });
+    if (data.draftOrder?.ready) return true;
+  }
+
+  return false;
 };

@@ -24,6 +24,8 @@ let calls: GraphqlCall[];
 let adminTokens: (string | null)[];
 let openDrafts: { id: string; status: string; customAttributes: { key: string; value: string }[] }[];
 let rateLimitOk: boolean;
+let readyAfterPolls: number;
+let readyPolls: number;
 
 const env = () =>
   ({
@@ -61,7 +63,18 @@ const shopifyFetch = async (_url: string, init: RequestInit) => {
     return Response.json({ data: { draftOrders: { nodes: openDrafts } } });
   }
 
-  const draftOrder = { id: 'gid://shopify/DraftOrder/1', name: '#D1', invoiceUrl: 'https://invoice.test/1', status: 'OPEN' };
+  if (call.query.includes('MaatwerkDraftReady')) {
+    readyPolls += 1;
+    return Response.json({ data: { draftOrder: { ready: readyPolls >= readyAfterPolls } } });
+  }
+
+  const draftOrder = {
+    id: 'gid://shopify/DraftOrder/1',
+    name: '#D1',
+    invoiceUrl: 'https://invoice.test/1',
+    status: 'OPEN',
+    ready: readyAfterPolls === 0,
+  };
   const key = call.query.includes('draftOrderUpdate') ? 'draftOrderUpdate' : 'draftOrderCreate';
   return Response.json({ data: { [key]: { draftOrder, userErrors: [] } } });
 };
@@ -117,6 +130,8 @@ beforeEach(() => {
   adminTokens = [];
   openDrafts = [];
   rateLimitOk = true;
+  readyAfterPolls = 0;
+  readyPolls = 0;
   vi.stubGlobal('fetch', vi.fn(shopifyFetch));
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
@@ -285,6 +300,27 @@ describe('tile lines', () => {
     const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({}, NO_BOX_TILE_VARIANT)] });
 
     expect(response.status).toBe(400);
+  });
+});
+
+describe('draft readiness', () => {
+  it('waits until Shopify has finished calculating the draft before returning the invoice URL', async () => {
+    vi.useFakeTimers();
+    readyAfterPolls = 2;
+
+    const pending = checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+    await vi.runAllTimersAsync();
+    const response = await pending;
+    vi.useRealTimers();
+
+    expect(response.status).toBe(200);
+    expect(readyPolls).toBe(2);
+    expect(await response.json()).toEqual({ invoiceUrl: 'https://invoice.test/1' });
+  });
+
+  it('does not poll when the saved draft is already ready', async () => {
+    await checkout({ expectedTotalCents: 6800, lines: [sillLine()] });
+    expect(readyPolls).toBe(0);
   });
 });
 

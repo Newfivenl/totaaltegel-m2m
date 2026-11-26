@@ -1,6 +1,6 @@
 import { PriceMismatchError, quoteCheckout, quoteRequestLines } from './quote';
 import { InvalidRequestError, parseCheckoutRequest, parseQuoteRequest } from './request';
-import { buildDraftInput, buildQuoteDraftInput, fetchVariants, findOpenDraftId, saveDraft } from './shopify';
+import { buildDraftInput, buildQuoteDraftInput, fetchVariants, findOpenDraftId, saveDraft, waitUntilReady } from './shopify';
 import { handleOrderCreated } from './webhooks';
 
 const CHECKOUT_ROUTE = '/maatwerk-checkout';
@@ -62,10 +62,12 @@ const handleCheckout = async (request: Request, env: Env): Promise<[number, unkn
   try {
     const existingDraftId = await findOpenDraftId(env, checkout.cartToken);
     const draft = await saveDraft(env, existingDraftId, buildDraftInput(checkout, quote.lines));
+    const ready = await waitUntilReady(env, draft);
 
     log('draft_saved', {
       draft: draft.name,
       updated: existingDraftId !== null,
+      ready,
       computedCents: quote.computedCents,
       lines: quote.lines.map((line) => ({ variantId: line.variantId, priceOverrideCents: line.priceOverrideCents })),
     });
