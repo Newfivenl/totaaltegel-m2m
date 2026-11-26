@@ -4,12 +4,16 @@ import worker from '../src/index';
 const SILL_VARIANT = 44000000000001;
 const MITER_VARIANT = 44000000000002;
 const DORPEL_VARIANT = 44000000000003;
+const TILE_VARIANT = 44000000000004;
+const NO_BOX_TILE_VARIANT = 44000000000005;
 const ORIGIN = 'https://www.totaaltegel.nl';
 
-const variantNodes: Record<number, { price: string; minWidth?: string; maxWidth?: string }> = {
+const variantNodes: Record<number, { price: string; minWidth?: string; maxWidth?: string; boxM2?: string }> = {
   [SILL_VARIANT]: { price: '0.85', minWidth: '100', maxWidth: '600' },
   [MITER_VARIANT]: { price: '15.00' },
   [DORPEL_VARIANT]: { price: '85.47' },
+  [TILE_VARIANT]: { price: '47.01', boxM2: '1.44' },
+  [NO_BOX_TILE_VARIANT]: { price: '47.01' },
 };
 
 type GraphqlCall = { query: string; variables: Record<string, any> };
@@ -46,6 +50,7 @@ const shopifyFetch = async (_url: string, init: RequestInit) => {
         price: variant.price,
         minWidth: variant.minWidth ? { value: variant.minWidth } : null,
         maxWidth: variant.maxWidth ? { value: variant.maxWidth } : null,
+        boxM2: variant.boxM2 ? { value: variant.boxM2 } : null,
       };
     });
     return Response.json({ data: { nodes } });
@@ -73,6 +78,21 @@ const sillLine = (overrides: Record<string, string> = {}, quantity = 1) => ({
     Dikte: '3 cm',
     Diepte: '40 cm',
     Lengte: '200 cm',
+    ...overrides,
+  },
+});
+
+const tileLine = (overrides: Record<string, string> = {}, variantId = TILE_VARIANT) => ({
+  variantId,
+  quantity: 1,
+  properties: {
+    _maatwerk: '1',
+    _calc_mode: 'tiles',
+    _boxes: '35',
+    _area_m2: '50.4',
+    _expected_line_cents: '236930',
+    Oppervlakte: '50,4 m²',
+    Dozen: '35',
     ...overrides,
   },
 });
@@ -168,6 +188,48 @@ describe('draft lines', () => {
     expect(sill.priceOverride.amount).toBe('68.00');
     expect(miter).not.toHaveProperty('priceOverride');
     expect(miter.quantity).toBe(1);
+  });
+});
+
+describe('tile lines', () => {
+  it('prices 35 boxes of 1,44 m² at 47,01 as one line of 2.369,30', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine()] });
+
+    expect(response.status).toBe(200);
+    const [lineItem] = mutationCall()!.variables.input.lineItems;
+    expect(lineItem).toMatchObject({
+      variantId: `gid://shopify/ProductVariant/${TILE_VARIANT}`,
+      quantity: 1,
+      priceOverride: { amount: '2369.30', currencyCode: 'EUR' },
+    });
+    expect(lineItem.customAttributes).toContainEqual({ key: '_area_m2', value: '50.4' });
+    expect(lineItem.customAttributes).toContainEqual({ key: '_boxes', value: '35' });
+  });
+
+  it('returns 409 when _expected_line_cents does not match the box price', async () => {
+    const response = await checkout({ expectedTotalCents: 230_349, lines: [tileLine({ _expected_line_cents: '230349' })] });
+
+    expect(response.status).toBe(409);
+    expect(mutationCall()).toBeUndefined();
+  });
+
+  it('returns 400 when _area_m2 is not the m² in the boxes', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _area_m2: '49' })] });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_line' });
+  });
+
+  it('returns 400 for a fractional box count', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _boxes: '34.5' })] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when the variant has no m² per box', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({}, NO_BOX_TILE_VARIANT)] });
+
+    expect(response.status).toBe(400);
   });
 });
 

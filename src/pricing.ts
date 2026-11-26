@@ -31,4 +31,11 @@ export const sillLineCents = (
   return Math.round((lengthCm * unit) / 100);
 };
 
+// Tiles sell in whole boxes. The area is kept in thousandths of a m² so 35 × 1,44 is exactly 50,400
+// before the price per m² is applied; the price is rounded once, on the line.
+export const tileAreaThousandths = (boxes: number, boxM2: number): number => Math.round(boxes * boxM2 * 1000);
+
+export const tileLineCents = (variantPriceCents: number, boxes: number, boxM2: number): number =>
+  Math.round((tileAreaThousandths(boxes, boxM2) * variantPriceCents) / 1000);
+
 export const withinTolerance = (a: number, b: number): boolean => Math.abs(a - b) <= PRICE_TOLERANCE_CENTS;

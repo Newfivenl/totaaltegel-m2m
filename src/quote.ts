@@ -1,10 +1,12 @@
-import { isCalcMode, sillLineCents, withinTolerance } from './pricing';
+import { isCalcMode, sillLineCents, tileAreaThousandths, tileLineCents, withinTolerance } from './pricing';
 import { type CheckoutLine, type CheckoutRequest, InvalidRequestError } from './request';
 
 export type VariantInfo = {
   priceCents: number;
   minWidthMm: number | null;
   maxWidthMm: number | null;
+  /** m² per box (`erp.pieces_per_box`); null when the variant has none. */
+  boxM2: number | null;
 };
 
 export type DraftLine = {
@@ -29,6 +31,8 @@ export class PriceMismatchError extends Error {
 }
 
 const MAX_DIMENSION_CM = 10_000;
+const MAX_BOXES = 10_000;
+const TILE_CALC_MODE = 'tiles';
 
 const parseDimensionCm = (value: string | undefined): number | undefined => {
   if (value === undefined || value.trim() === '') return undefined;
@@ -66,6 +70,35 @@ const sillPieceCents = (properties: Record<string, string>, variant: VariantInfo
   return sillLineCents(mode, variant.priceCents, depthCm, lengthCm);
 };
 
+const parseBoxes = (value: string | undefined): number => {
+  if (value === undefined || !/^\d+$/.test(value.trim())) throw new InvalidRequestError('invalid_line');
+
+  const boxes = Number(value.trim());
+  if (boxes < 1 || boxes > MAX_BOXES) throw new InvalidRequestError('invalid_line');
+  return boxes;
+};
+
+const parseAreaThousandths = (value: string | undefined): number => {
+  const m2 = Number((value ?? '').trim().replace(',', '.'));
+  if (!Number.isFinite(m2) || m2 <= 0) throw new InvalidRequestError('invalid_line');
+  return Math.round(m2 * 1000);
+};
+
+// The area comes from the box count and the variant's own box size, never from the client.
+// `_area_m2` must still match it, because the ERP reads the m² from that property.
+const tileLineCentsFor = (properties: Record<string, string>, variant: VariantInfo): number => {
+  if (variant.boxM2 === null) throw new InvalidRequestError('invalid_line');
+
+  const boxes = parseBoxes(properties._boxes);
+  if (parseAreaThousandths(properties._area_m2) !== tileAreaThousandths(boxes, variant.boxM2)) {
+    throw new InvalidRequestError('invalid_line');
+  }
+  return tileLineCents(variant.priceCents, boxes, variant.boxM2);
+};
+
+const maatwerkLineCents = (properties: Record<string, string>, variant: VariantInfo): number =>
+  properties._calc_mode === TILE_CALC_MODE ? tileLineCentsFor(properties, variant) : sillPieceCents(properties, variant);
+
 // The ERP reads quantity as pieces, so every piece becomes its own quantity-1 draft line.
 const pushPieces = (lines: DraftLine[], line: CheckoutLine, properties: Record<string, string>, pieceCents: number) => {
   for (let piece = 0; piece < line.quantity; piece++) {
@@ -97,7 +130,7 @@ export const quoteCheckout = (request: CheckoutRequest, variants: Map<string, Va
     }
 
     const expectedLineCents = parseCents(line.properties._expected_line_cents);
-    const lineCents = sillPieceCents(line.properties, variant);
+    const lineCents = maatwerkLineCents(line.properties, variant);
     if (!withinTolerance(lineCents, expectedLineCents)) throw new PriceMismatchError(expectedLineCents, lineCents);
 
     pushPieces(lines, line, line.properties, lineCents);
@@ -126,7 +159,7 @@ export const quoteRequestLines = (requestLines: CheckoutLine[], variants: Map<st
       continue;
     }
 
-    const lineCents = sillPieceCents(line.properties, variant);
+    const lineCents = maatwerkLineCents(line.properties, variant);
     pushPieces(lines, line, { ...line.properties, _expected_line_cents: String(lineCents) }, lineCents);
     computedCents += lineCents * line.quantity;
   }

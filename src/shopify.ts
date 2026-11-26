@@ -56,6 +56,9 @@ const VARIANTS_QUERY = /* GraphQL */ `
         maxWidth: metafield(namespace: "erp", key: "max_width_mm") {
           value
         }
+        boxM2: metafield(namespace: "erp", key: "pieces_per_box") {
+          value
+        }
       }
     }
   }
@@ -66,15 +69,16 @@ type VariantNode = {
   price: string;
   minWidth: { value: string } | null;
   maxWidth: { value: string } | null;
+  boxM2: { value: string } | null;
 } | null;
 
 const variantGid = (id: string) => `gid://shopify/ProductVariant/${id}`;
 
-const parseMillimetres = (metafield: { value: string } | null): number | null => {
+const parsePositive = (metafield: { value: string } | null | undefined): number | null => {
   if (!metafield) return null;
 
-  const mm = Number(metafield.value);
-  return Number.isFinite(mm) && mm > 0 ? mm : null;
+  const value = Number(metafield.value.replace(',', '.'));
+  return Number.isFinite(value) && value > 0 ? value : null;
 };
 
 export const fetchVariants = async (env: Env, variantIds: string[]): Promise<Map<string, VariantInfo>> => {
@@ -89,8 +93,9 @@ export const fetchVariants = async (env: Env, variantIds: string[]): Promise<Map
 
     variants.set(node.id.replace('gid://shopify/ProductVariant/', ''), {
       priceCents: moneyToCents(node.price),
-      minWidthMm: parseMillimetres(node.minWidth),
-      maxWidthMm: parseMillimetres(node.maxWidth),
+      minWidthMm: parsePositive(node.minWidth),
+      maxWidthMm: parsePositive(node.maxWidth),
+      boxM2: parsePositive(node.boxM2),
     });
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { centsToAmount, moneyToCents, sillLineCents, unitCents } from '../src/pricing';
+import { centsToAmount, moneyToCents, sillLineCents, tileAreaThousandths, tileLineCents, unitCents } from '../src/pricing';
 
 describe('unitCents', () => {
   it('multiplies legacy ERP prices by 100', () => {
@@ -37,5 +37,21 @@ describe('moneyToCents', () => {
     expect(moneyToCents('85.47')).toBe(8547);
     expect(moneyToCents('12.0')).toBe(1200);
     expect(moneyToCents('0.29')).toBe(29);
+  });
+});
+
+describe('tileLineCents', () => {
+  it('prices 35 boxes of 1,44 m² at 47,01 per m² as 50,4 m², rounded once', () => {
+    expect(tileAreaThousandths(35, 1.44)).toBe(50_400);
+    expect(tileLineCents(4701, 35, 1.44)).toBe(236_930);
+  });
+
+  it('keeps float noise out of the area: 3 boxes of 1,418 m²', () => {
+    expect(tileAreaThousandths(3, 1.418)).toBe(4254);
+    expect(tileLineCents(3995, 3, 1.418)).toBe(16_995);
+  });
+
+  it('does not apply the legacy ÷100 switch to tiles', () => {
+    expect(tileLineCents(995, 10, 1)).toBe(9950);
   });
 });
