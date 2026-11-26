@@ -59,6 +59,9 @@ const VARIANTS_QUERY = /* GraphQL */ `
         boxM2: metafield(namespace: "erp", key: "pieces_per_box") {
           value
         }
+        product {
+          templateSuffix
+        }
       }
     }
   }
@@ -70,6 +73,7 @@ type VariantNode = {
   minWidth: { value: string } | null;
   maxWidth: { value: string } | null;
   boxM2: { value: string } | null;
+  product: { templateSuffix: string | null } | null;
 } | null;
 
 const variantGid = (id: string) => `gid://shopify/ProductVariant/${id}`;
@@ -96,6 +100,7 @@ export const fetchVariants = async (env: Env, variantIds: string[]): Promise<Map
       minWidthMm: parsePositive(node.minWidth),
       maxWidthMm: parsePositive(node.maxWidth),
       boxM2: parsePositive(node.boxM2),
+      templateSuffix: node.product?.templateSuffix || null,
     });
   }
 

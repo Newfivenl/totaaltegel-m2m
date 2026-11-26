@@ -8,10 +8,10 @@ const TILE_VARIANT = 44000000000004;
 const NO_BOX_TILE_VARIANT = 44000000000005;
 const ORIGIN = 'https://www.totaaltegel.nl';
 
-const variantNodes: Record<number, { price: string; minWidth?: string; maxWidth?: string; boxM2?: string }> = {
-  [SILL_VARIANT]: { price: '0.85', minWidth: '100', maxWidth: '600' },
+const variantNodes: Record<number, { price: string; minWidth?: string; maxWidth?: string; boxM2?: string; template?: string }> = {
+  [SILL_VARIANT]: { price: '0.85', minWidth: '100', maxWidth: '600', template: 'vensterbank' },
   [MITER_VARIANT]: { price: '15.00' },
-  [DORPEL_VARIANT]: { price: '85.47' },
+  [DORPEL_VARIANT]: { price: '85.47', template: 'raamdorpel' },
   [TILE_VARIANT]: { price: '47.01', boxM2: '1.44' },
   [NO_BOX_TILE_VARIANT]: { price: '47.01' },
 };
@@ -51,6 +51,7 @@ const shopifyFetch = async (_url: string, init: RequestInit) => {
         minWidth: variant.minWidth ? { value: variant.minWidth } : null,
         maxWidth: variant.maxWidth ? { value: variant.maxWidth } : null,
         boxM2: variant.boxM2 ? { value: variant.boxM2 } : null,
+        product: { templateSuffix: variant.template ?? null },
       };
     });
     return Response.json({ data: { nodes } });
@@ -224,6 +225,41 @@ describe('tile lines', () => {
     const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _boxes: '34.5' })] });
 
     expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for a tile bought as a 1 cm raamdorpel', async () => {
+    const response = await checkout({
+      expectedTotalCents: 47,
+      lines: [tileLine({ _calc_mode: 'sill_m1', _length_cm: '1', _expected_line_cents: '47' })],
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for a sill priced as tile boxes', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({}, SILL_VARIANT)] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 for a catalog-priced line carrying an ERP size', async () => {
+    const forged = { variantId: TILE_VARIANT, quantity: 1, properties: { _area_m2: '500', _boxes: '348' } };
+    const response = await checkout({ expectedTotalCents: 4701, lines: [forged] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it.each(['5.04e1', '0x32', '50,4', ' 50.4abc'])('returns 400 for _area_m2 %j', async (area) => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _area_m2: area })] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('writes its own area into the draft line', async () => {
+    const response = await checkout({ expectedTotalCents: 236_930, lines: [tileLine({ _area_m2: '50.400' })] });
+
+    expect(response.status).toBe(200);
+    expect(mutationCall()!.variables.input.lineItems[0].customAttributes).toContainEqual({ key: '_area_m2', value: '50.4' });
   });
 
   it('returns 400 when the variant has no m² per box', async () => {
